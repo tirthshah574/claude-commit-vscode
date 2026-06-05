@@ -9,3 +9,5 @@ tsconfig.json
 !out/**
 node_modules/**
 eslint.config.js
+.claude/**
+CLAUDE.md
