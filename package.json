@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "publisher": "simform",
   "engines": {
-    "vscode": "^1.95.0"
+    "vscode": "^1.120.0"
   },
   "categories": [
     "SCM Providers",
