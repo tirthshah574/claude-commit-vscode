@@ -139,7 +139,25 @@ async function getGitDiff(cwd: string): Promise<string> {
   if (staged.trim()) {
     return staged;
   }
-  return gitExec(['diff', 'HEAD'], cwd);
+
+  // Unstaged tracked changes
+  const unstaged = await gitExec(['diff'], cwd).catch(() => '');
+
+  // Untracked (new) files — include their content
+  const untrackedList = await gitExec(['ls-files', '--others', '--exclude-standard'], cwd).catch(() => '');
+  const untrackedFiles = untrackedList.split('\n').filter(Boolean);
+
+  let untrackedDiff = '';
+  for (const file of untrackedFiles) {
+    try {
+      const content = fs.readFileSync(path.join(cwd, file), 'utf8');
+      untrackedDiff += `\n+++ new file: ${file}\n${content}`;
+    } catch {
+      untrackedDiff += `\n+++ new file: ${file}\n`;
+    }
+  }
+
+  return (unstaged + untrackedDiff).trim();
 }
 
 async function getRecentCommits(cwd: string): Promise<string> {
@@ -156,7 +174,7 @@ async function getRecentCommits(cwd: string): Promise<string> {
 }
 
 function getClaudeMdExcerpt(cwd: string): Promise<string> {
-  const keywords = /commit|message|conventional|format|style|prefix|type/i;
+  const sectionKeywords = /commit|message|conventional|format|style|prefix/i;
   const candidates = [
     path.join(cwd, 'CLAUDE.md'),
     path.join(cwd, '..', 'CLAUDE.md'),
@@ -165,13 +183,34 @@ function getClaudeMdExcerpt(cwd: string): Promise<string> {
   for (const filePath of candidates) {
     try {
       const content = fs.readFileSync(filePath, 'utf8');
-      const matched = content
-        .split('\n')
-        .filter(line => keywords.test(line))
-        .slice(0, 20)
-        .join('\n');
-      if (matched.trim()) {
-        return Promise.resolve(matched.trim());
+      const lines = content.split('\n');
+
+      // Find a section header that mentions commit/style keywords
+      let sectionStart = -1;
+      for (let i = 0; i < lines.length; i++) {
+        if (/^#{1,3}\s/.test(lines[i]) && sectionKeywords.test(lines[i])) {
+          sectionStart = i;
+          break;
+        }
+      }
+
+      if (sectionStart !== -1) {
+        // Extract from that header until the next same-or-higher-level header
+        const headerLevel = (lines[sectionStart].match(/^#+/) ?? [''])[0].length;
+        const headerPattern = new RegExp(`^#{1,${headerLevel}}\\s`);
+        let sectionEnd = lines.length;
+        for (let i = sectionStart + 1; i < lines.length; i++) {
+          if (headerPattern.test(lines[i])) {
+            sectionEnd = i;
+            break;
+          }
+        }
+        return Promise.resolve(lines.slice(sectionStart, sectionEnd).join('\n').trim());
+      }
+
+      // No matching section — return full file
+      if (content.trim()) {
+        return Promise.resolve(content.trim());
       }
     } catch {
       // file not found or unreadable — continue
