@@ -7,13 +7,15 @@ import * as fs from 'fs';
 // task-specific contract — the single biggest input-token saving available without
 // --bare (which would break OAuth/keychain auth).
 const COMMIT_SYSTEM_PROMPT =
-  'You are a git commit message generator. Given a diff and optional context, output ONLY ' +
-  'the commit message — no preamble, no explanation, no markdown, no code fences. ' +
-  'Use a concise imperative subject line (≤72 chars, ideally ≤50). ' +
-  'Add a short body only when the change warrants it. ' +
-  'Follow Conventional Commits (feat, fix, docs, chore, refactor, test, ci) and ' +
-  'match any provided recent-commit examples and project standards. ' +
-  "Never invent a scope that does not appear in the diff's file paths.";
+  'You are a git commit message generator. Output ONLY the raw commit message text — ' +
+  'no explanation, no markdown fences, no quotes. Just the message itself, ready to copy-paste. ' +
+  'Rules: ' +
+  '1. Study the recent commits provided and match the exact format and style of the project. ' +
+  '2. Use conventional commit types where applicable: feat, fix, refactor, docs, test, chore, perf, style, delete. ' +
+  '3. Subject line: imperative mood, lowercase after the prefix, no trailing period, max 72 chars. ' +
+  '4. If there are multiple logical changes, write a multi-line message with a short subject and a bullet-point body. ' +
+  '5. If commit guidelines from a CLAUDE.md file are provided, treat them as the highest priority and follow them strictly alongside the recent commit style. ' +
+  'If there are no changes, say: "No changes to commit."';
 
 // ~25k tokens — generous for normal code, prevents argv-limit issues on huge diffs.
 const MAX_DIFF_CHARS = 100_000;
