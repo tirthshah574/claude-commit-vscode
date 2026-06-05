@@ -53,6 +53,11 @@
           "type": "number",
           "default": 30000,
           "description": "Timeout in milliseconds for the Claude CLI invocation."
+        },
+        "claudeCommit.model": {
+          "type": "string",
+          "default": "haiku",
+          "description": "Claude model to use. 'haiku' is fastest and cheapest; use 'sonnet' for better quality."
         }
       }
     }
