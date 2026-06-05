@@ -29,7 +29,10 @@
       {
         "command": "claudeCommit.generate",
         "title": "Claude Commit: Generate Commit Message",
-        "icon": "$(hubot)"
+        "icon": {
+          "light": "images/icon.png",
+          "dark": "images/icon.png"
+        }
       }
     ],
     "menus": {
