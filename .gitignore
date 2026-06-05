@@ -1,0 +1,9 @@
+node_modules/
+out/
+*.vsix
+.vscode-test/
+*.js.map
+
+# Claude Code local overrides (personal, not team-shared)
+CLAUDE.local.md
+.claude/settings.local.json

@@ -1,0 +1,81 @@
+{
+  "name": "claude-commit-vscode",
+  "displayName": "Claude Commit",
+  "description": "Generate AI-powered commit messages using the Claude CLI directly from VS Code's Source Control panel.",
+  "version": "0.1.0",
+  "publisher": "simform",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "SCM Providers",
+    "Other"
+  ],
+  "keywords": [
+    "git",
+    "commit",
+    "claude",
+    "ai",
+    "anthropic"
+  ],
+  "main": "./out/extension.js",
+  "icon": "images/icon.png",
+  "galleryBanner": {
+    "color": "#1a1a2e",
+    "theme": "dark"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "claudeCommit.generate",
+        "title": "Claude Commit: Generate Commit Message",
+        "icon": "$(hubot)"
+      }
+    ],
+    "menus": {
+      "scm/title": [
+        {
+          "command": "claudeCommit.generate",
+          "group": "navigation",
+          "when": "scmProvider == git"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Claude Commit",
+      "properties": {
+        "claudeCommit.claudePath": {
+          "type": "string",
+          "default": "claude",
+          "description": "Path to the claude CLI binary. Defaults to 'claude' (must be in PATH)."
+        },
+        "claudeCommit.timeout": {
+          "type": "number",
+          "default": 30000,
+          "description": "Timeout in milliseconds for the Claude CLI invocation."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src/",
+    "package": "vsce package",
+    "publish": "vsce publish"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.120.0",
+    "eslint": "^9.0.0",
+    "typescript": "^6.0.0",
+    "typescript-eslint": "^8.0.0",
+    "@vscode/vsce": "^3.0.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SimformSolutionsPvtLtd/claude-commit-vscode"
+  }
+}
