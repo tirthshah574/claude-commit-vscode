@@ -205,7 +205,7 @@ function runClaude(
 
     prompt += `Diff:\n${diff}`;
 
-    const args = ['--print', '--bare', '--model', model, '--effort', 'low', prompt];
+    const args = ['--print', '--model', model, '--effort', 'low', prompt];
 
     let child: ReturnType<typeof spawn>;
     try {
