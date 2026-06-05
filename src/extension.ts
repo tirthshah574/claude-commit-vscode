@@ -80,7 +80,22 @@ async function generateCommitMessage(outputChannel: vscode.OutputChannel): Promi
   const claudePath: string = config.get('claudePath', 'claude');
   const timeoutMs: number = config.get('timeout', 30000);
 
-  // Run claude --print /commit-msg with a progress notification
+  // Get staged diff first; bail early if nothing is staged
+  let diff: string;
+  try {
+    diff = await getGitDiff(repo!.rootUri.fsPath);
+  } catch (err: unknown) {
+    vscode.window.showErrorMessage(
+      `Claude Commit: Failed to get git diff — ${err instanceof Error ? err.message : String(err)}`
+    );
+    return;
+  }
+
+  if (!diff.trim()) {
+    vscode.window.showWarningMessage('Claude Commit: No staged changes found. Stage some files first.');
+    return;
+  }
+
   await vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
@@ -92,7 +107,7 @@ async function generateCommitMessage(outputChannel: vscode.OutputChannel): Promi
 
       let message: string;
       try {
-        message = await runClaude(claudePath, repo!.rootUri.fsPath, timeoutMs, token, outputChannel);
+        message = await runClaude(claudePath, repo!.rootUri.fsPath, diff, timeoutMs, token, outputChannel);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         const selection = await vscode.window.showErrorMessage(`Claude Commit: ${msg}`, 'Show Output');
@@ -120,15 +135,38 @@ async function generateCommitMessage(outputChannel: vscode.OutputChannel): Promi
   );
 }
 
+function getGitDiff(cwd: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', ['diff', '--cached'], { cwd, shell: false });
+    let stdout = '';
+    let stderr = '';
+    child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+    child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+    child.on('error', reject);
+    child.on('close', (code: number | null) => {
+      if (code === 0) {
+        resolve(stdout);
+      } else {
+        reject(new Error(`git diff failed (code ${code}): ${stderr.trim()}`));
+      }
+    });
+  });
+}
+
 function runClaude(
   claudePath: string,
   cwd: string,
+  diff: string,
   timeoutMs: number,
   token: vscode.CancellationToken,
   outputChannel: vscode.OutputChannel
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    const args = ['--print', '/commit-msg'];
+    const prompt =
+      'Generate a concise conventional commit message for the following staged changes. ' +
+      'Output only the commit message text, nothing else — no explanation, no markdown, no quotes.\n\n' +
+      diff;
+    const args = ['--print', prompt];
 
     let child: ReturnType<typeof spawn>;
     try {
