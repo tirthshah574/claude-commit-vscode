@@ -332,8 +332,8 @@ function runClaude(
       '--effort', 'low',
       '--system-prompt', COMMIT_SYSTEM_PROMPT,
       '--setting-sources', '',
-      '--tools', '',
       prompt,
+      '--tools', '',   // must come after the positional prompt — --tools is variadic
     ];
 
     let child: ReturnType<typeof spawn>;
