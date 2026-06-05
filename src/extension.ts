@@ -212,6 +212,7 @@ function runClaude(
       child = spawn(claudePath, args, {
         cwd,
         shell: false,
+        stdio: ['ignore', 'pipe', 'pipe'],
         env: { ...process.env, PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin' },
       });
     } catch (err: unknown) {
