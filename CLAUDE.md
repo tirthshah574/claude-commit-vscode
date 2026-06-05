@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-VS Code extension that adds a sparkle (✦) button to the SCM toolbar. Clicking it runs `claude --print /commit-msg` in the workspace root and writes the output into the SCM commit input box.
+VS Code extension that adds a hubot button to the SCM toolbar. Clicking it generates a commit message using the Claude CLI and writes it into the SCM commit input box.
 
 Entry point: `src/extension.ts` → compiled to `out/extension.js`
 
@@ -24,7 +24,13 @@ npx vsce package         # produces claude-commit-*.vsix
 ## Architecture
 
 - `src/extension.ts` — single file; `activate()` registers `claudeCommit.generate`
-- The command: resolves workspace root → gets `vscode.git` API → checks staged changes → spawns `claude --print /commit-msg` → writes trimmed stdout to `repo.inputBox.value`
+- The command flow:
+  1. Resolves workspace root → gets `vscode.git` API
+  2. **Fast-path**: if all staged files are generated (lockfiles, `dist/`, `*.min.*`, `*.map`), writes a conventional `chore:` message instantly — no CLI spawn
+  3. Otherwise: builds the diff with generated files excluded via git pathspecs; if diff exceeds 100k chars, falls back to `--stat` summary
+  4. Spawns `claude --print --model haiku --effort low --system-prompt <COMMIT_SYSTEM_PROMPT> --setting-sources '' --tools '' <prompt>` with the diff + recent-commit style + CLAUDE.md excerpt inlined
+  5. Writes trimmed stdout to `repo.inputBox.value`
+- CLI flags used: `--system-prompt` replaces the default coding-agent prompt; `--tools ''` disables all tool schemas; `--setting-sources ''` skips user/project settings. **`--bare` is NOT used** — it disables OAuth/keychain auth.
 - No runtime dependencies; only `devDependencies` (TypeScript, `@types/vscode`, `@types/node`)
 
 ## Coding Standards
@@ -49,3 +55,4 @@ See `.claude/rules/typescript.md` for TypeScript rules and `.claude/rules/vscode
 |---|---|---|
 | `claudeCommit.claudePath` | `"claude"` | Path to claude CLI binary |
 | `claudeCommit.timeout` | `30000` | Timeout in ms for CLI |
+| `claudeCommit.model` | `"haiku"` | Claude model (`haiku` is fastest; `sonnet` for higher quality) |

@@ -3,6 +3,55 @@ import { spawn } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 
+// Replaces the large default Claude Code coding-agent system prompt with a tight,
+// task-specific contract — the single biggest input-token saving available without
+// --bare (which would break OAuth/keychain auth).
+const COMMIT_SYSTEM_PROMPT =
+  'You are a git commit message generator. Given a diff and optional context, output ONLY ' +
+  'the commit message — no preamble, no explanation, no markdown, no code fences. ' +
+  'Use a concise imperative subject line (≤72 chars, ideally ≤50). ' +
+  'Add a short body only when the change warrants it. ' +
+  'Follow Conventional Commits (feat, fix, docs, chore, refactor, test, ci) and ' +
+  'match any provided recent-commit examples and project standards. ' +
+  "Never invent a scope that does not appear in the diff's file paths.";
+
+// ~25k tokens — generous for normal code, prevents argv-limit issues on huge diffs.
+const MAX_DIFF_CHARS = 100_000;
+
+// Applied to every diff call so generated files never inflate token usage.
+// Harmless when no generated files are present.
+const GENERATED_PATHSPECS = [
+  ':(exclude)package-lock.json',
+  ':(exclude)pnpm-lock.yaml',
+  ':(exclude)yarn.lock',
+  ':(exclude)*.lock',
+  ':(exclude)*.min.js',
+  ':(exclude)*.min.css',
+  ':(exclude)*.map',
+  ':(exclude)dist/',
+  ':(exclude)build/',
+];
+
+function isLockFile(filePath: string): boolean {
+  const base = path.basename(filePath);
+  return (
+    base === 'package-lock.json' ||
+    base === 'pnpm-lock.yaml' ||
+    base === 'yarn.lock' ||
+    base.endsWith('.lock')
+  );
+}
+
+function isGeneratedFile(filePath: string): boolean {
+  if (isLockFile(filePath)) { return true; }
+  const base = path.basename(filePath);
+  if (base.endsWith('.min.js') || base.endsWith('.min.css') || base.endsWith('.map')) {
+    return true;
+  }
+  const segments = filePath.split(/[/\\]/);
+  return segments.includes('dist') || segments.includes('build');
+}
+
 export function activate(context: vscode.ExtensionContext) {
   const outputChannel = vscode.window.createOutputChannel('Claude Commit');
   context.subscriptions.push(outputChannel);
@@ -64,6 +113,14 @@ async function generateCommitMessage(outputChannel: vscode.OutputChannel): Promi
 
   const cwd = repo.rootUri.fsPath;
 
+  // Fast-path: all staged files are generated (lockfiles, dist, …) — skip the LLM entirely.
+  // This is the most common "boring" commit scenario and has zero latency.
+  const trivialMessage = await tryTrivialCommitMessage(cwd);
+  if (trivialMessage !== null) {
+    repo.inputBox.value = trivialMessage;
+    return;
+  }
+
   let diff: string;
   try {
     diff = await getGitDiff(cwd);
@@ -116,6 +173,19 @@ async function generateCommitMessage(outputChannel: vscode.OutputChannel): Promi
   );
 }
 
+// Returns a deterministic message when all staged files are generated, or null to continue
+// with the normal LLM flow. Only fires when there ARE staged files and ALL are generated.
+async function tryTrivialCommitMessage(cwd: string): Promise<string | null> {
+  const raw = await gitExec(['diff', '--cached', '--name-only'], cwd).catch(() => '');
+  const staged = raw.split('\n').filter(Boolean);
+  if (staged.length === 0 || staged.some(f => !isGeneratedFile(f))) {
+    return null;
+  }
+  return staged.every(f => isLockFile(f))
+    ? 'chore: update dependencies'
+    : 'chore: update generated assets';
+}
+
 function gitExec(args: string[], cwd: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn('git', args, { cwd, shell: false });
@@ -134,30 +204,45 @@ function gitExec(args: string[], cwd: string): Promise<string> {
   });
 }
 
+async function getStagedDiff(cwd: string): Promise<string> {
+  const diff = await gitExec(['diff', '--cached', ...GENERATED_PATHSPECS], cwd);
+  if (!diff.trim()) { return ''; }
+  if (diff.length <= MAX_DIFF_CHARS) { return diff; }
+  // Diff too large — fall back to --stat so the model still gets file-level context
+  const stat = await gitExec(['diff', '--cached', '--stat', ...GENERATED_PATHSPECS], cwd);
+  return `[Large diff — showing file change summary only]\n${stat}`;
+}
+
 async function getGitDiff(cwd: string): Promise<string> {
-  const staged = await gitExec(['diff', '--cached'], cwd);
+  const staged = await getStagedDiff(cwd);
   if (staged.trim()) {
     return staged;
   }
 
   // Unstaged tracked changes
-  const unstaged = await gitExec(['diff'], cwd).catch(() => '');
+  const unstaged = await gitExec(['diff', ...GENERATED_PATHSPECS], cwd).catch(() => '');
 
-  // Untracked (new) files — include their content
+  // Untracked (new) files — include their content, skip generated
   const untrackedList = await gitExec(['ls-files', '--others', '--exclude-standard'], cwd).catch(() => '');
-  const untrackedFiles = untrackedList.split('\n').filter(Boolean);
+  const untrackedFiles = untrackedList.split('\n').filter(f => f && !isGeneratedFile(f));
 
   let untrackedDiff = '';
   for (const file of untrackedFiles) {
     try {
-      const content = fs.readFileSync(path.join(cwd, file), 'utf8');
-      untrackedDiff += `\n+++ new file: ${file}\n${content}`;
+      const buf = fs.readFileSync(path.join(cwd, file));
+      // Skip binary files — null bytes in spawn args cause an EINVAL crash
+      if (buf.includes(0)) {
+        untrackedDiff += `\n+++ new file: ${file} [binary]\n`;
+      } else {
+        untrackedDiff += `\n+++ new file: ${file}\n${buf.toString('utf8')}`;
+      }
     } catch {
       untrackedDiff += `\n+++ new file: ${file}\n`;
     }
   }
 
-  return (unstaged + untrackedDiff).trim();
+  const combined = (unstaged + untrackedDiff).trim();
+  return combined.length > MAX_DIFF_CHARS ? combined.slice(0, MAX_DIFF_CHARS) : combined;
 }
 
 async function getRecentCommits(cwd: string): Promise<string> {
@@ -185,7 +270,6 @@ function getClaudeMdExcerpt(cwd: string): Promise<string> {
       const content = fs.readFileSync(filePath, 'utf8');
       const lines = content.split('\n');
 
-      // Find a section header that mentions commit/style keywords
       let sectionStart = -1;
       for (let i = 0; i < lines.length; i++) {
         if (/^#{1,3}\s/.test(lines[i]) && sectionKeywords.test(lines[i])) {
@@ -195,7 +279,6 @@ function getClaudeMdExcerpt(cwd: string): Promise<string> {
       }
 
       if (sectionStart !== -1) {
-        // Extract from that header until the next same-or-higher-level header
         const headerLevel = (lines[sectionStart].match(/^#+/) ?? [''])[0].length;
         const headerPattern = new RegExp(`^#{1,${headerLevel}}\\s`);
         let sectionEnd = lines.length;
@@ -208,7 +291,6 @@ function getClaudeMdExcerpt(cwd: string): Promise<string> {
         return Promise.resolve(lines.slice(sectionStart, sectionEnd).join('\n').trim());
       }
 
-      // No matching section — return full file
       if (content.trim()) {
         return Promise.resolve(content.trim());
       }
@@ -232,7 +314,7 @@ function runClaude(
   outputChannel: vscode.OutputChannel
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    let prompt = 'Write a git commit message. Output ONLY the message, nothing else.\n\n';
+    let prompt = '';
 
     if (recentCommits) {
       prompt += `Commit style (follow this pattern):\n${recentCommits}\n\n`;
@@ -244,7 +326,15 @@ function runClaude(
 
     prompt += `Diff:\n${diff}`;
 
-    const args = ['--print', '--model', model, '--effort', 'low', prompt];
+    const args = [
+      '--print',
+      '--model', model,
+      '--effort', 'low',
+      '--system-prompt', COMMIT_SYSTEM_PROMPT,
+      '--setting-sources', '',
+      '--tools', '',
+      prompt,
+    ];
 
     let child: ReturnType<typeof spawn>;
     try {
