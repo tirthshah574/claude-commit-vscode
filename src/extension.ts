@@ -318,7 +318,6 @@ function runClaude(
       '--system-prompt', COMMIT_SYSTEM_PROMPT,
       '--setting-sources', '',
       prompt,
-      '--tools', '',   // must come after the positional prompt — --tools is variadic
     ];
 
     const resolvedPath = claudePath.replace(/^~(?=\/|$)/, os.homedir());
@@ -332,7 +331,7 @@ function runClaude(
       '/bin',
     ].join(':');
 
-    outputChannel.appendLine(`[claude-commit] spawning: ${resolvedPath} ${args.slice(0, -1).join(' ')} <prompt>`);
+    outputChannel.appendLine(`[claude-commit] spawning: ${resolvedPath} --print --model ${model} --effort low --setting-sources '' <prompt ${prompt.length}chars>`);
 
     let child: ReturnType<typeof spawn>;
     try {
