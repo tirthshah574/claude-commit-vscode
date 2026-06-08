@@ -332,6 +332,8 @@ function runClaude(
       '/bin',
     ].join(':');
 
+    outputChannel.appendLine(`[claude-commit] spawning: ${resolvedPath} ${args.slice(0, -1).join(' ')} <prompt>`);
+
     let child: ReturnType<typeof spawn>;
     try {
       child = spawn(resolvedPath, args, {
@@ -350,7 +352,11 @@ function runClaude(
     let stdout = '';
     let stderr = '';
 
-    child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+    child.stdout?.on('data', (chunk: Buffer) => {
+      const text = chunk.toString();
+      stdout += text;
+      outputChannel.appendLine(text.trimEnd());
+    });
     child.stderr?.on('data', (chunk: Buffer) => {
       const text = chunk.toString();
       stderr += text;
@@ -359,8 +365,9 @@ function runClaude(
 
     const timer = setTimeout(() => {
       child.kill();
+      outputChannel.show();
       reject(new Error(
-        `Claude CLI timed out after ${timeoutMs}ms. Increase timeout via 'claudeCommit.timeout' setting.`
+        `Claude CLI timed out after ${timeoutMs}ms. Check the Output panel for details, or increase timeout via 'claudeCommit.timeout' setting.`
       ));
     }, timeoutMs);
 
