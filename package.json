@@ -19,6 +19,9 @@
     "anthropic"
   ],
   "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "icon": "images/icon.png",
   "galleryBanner": {
     "color": "#1a1a2e",

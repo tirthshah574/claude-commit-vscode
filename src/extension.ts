@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { spawn } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
-
+import * as os from 'os';
 // Replaces the large default Claude Code coding-agent system prompt with a tight,
 // task-specific contract — the single biggest input-token saving available without
 // --bare (which would break OAuth/keychain auth).
@@ -338,13 +338,24 @@ function runClaude(
       '--tools', '',   // must come after the positional prompt — --tools is variadic
     ];
 
+    const resolvedPath = claudePath.replace(/^~(?=\/|$)/, os.homedir());
+    const extraPaths = [
+      path.join(os.homedir(), '.local', 'bin'),
+      path.join(os.homedir(), 'bin'),
+      '/opt/homebrew/bin',
+      '/opt/homebrew/sbin',
+      '/usr/local/bin',
+      '/usr/bin',
+      '/bin',
+    ].join(':');
+
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn(claudePath, args, {
+      child = spawn(resolvedPath, args, {
         cwd,
         shell: false,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin' },
+        env: { ...process.env, PATH: `${extraPaths}:${process.env.PATH ?? ''}` },
       });
     } catch (err: unknown) {
       reject(new Error(
@@ -381,7 +392,7 @@ function runClaude(
       cancelDisposable.dispose();
       if (err.message.includes('ENOENT')) {
         reject(new Error(
-          `claude CLI not found at "${claudePath}". Install Claude Code or set 'claudeCommit.claudePath'.`
+          `claude CLI not found at "${resolvedPath}". Install Claude Code or set 'claudeCommit.claudePath'.`
         ));
       } else {
         reject(err);
