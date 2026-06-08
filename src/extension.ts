@@ -143,14 +143,15 @@ async function generateCommitMessage(outputChannel: vscode.OutputChannel): Promi
     async (progress, token) => {
       progress.report({ message: 'Generating commit message…' });
 
-      const [recentCommits, claudeMdExcerpt] = await Promise.all([
+      const [recentCommits, gitStatus, claudeMdExcerpt] = await Promise.all([
         getRecentCommits(cwd),
+        getGitStatus(cwd),
         getClaudeMdExcerpt(cwd),
       ]);
 
       let message: string;
       try {
-        message = await runClaude(claudePath, model, cwd, diff, recentCommits, claudeMdExcerpt, timeoutMs, token, outputChannel);
+        message = await runClaude(claudePath, model, cwd, diff, gitStatus, recentCommits, claudeMdExcerpt, timeoutMs, token, outputChannel);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         const selection = await vscode.window.showErrorMessage(`Claude Commit: ${msg}`, 'Show Output');
@@ -206,55 +207,30 @@ function gitExec(args: string[], cwd: string): Promise<string> {
   });
 }
 
-async function getStagedDiff(cwd: string): Promise<string> {
-  const diff = await gitExec(['diff', '--cached', ...GENERATED_PATHSPECS], cwd);
+async function getGitDiff(cwd: string): Promise<string> {
+  const diff = await gitExec(['diff', 'HEAD', ...GENERATED_PATHSPECS], cwd).catch(() => '');
   if (!diff.trim()) { return ''; }
   if (diff.length <= MAX_DIFF_CHARS) { return diff; }
-  // Diff too large — fall back to --stat so the model still gets file-level context
-  const stat = await gitExec(['diff', '--cached', '--stat', ...GENERATED_PATHSPECS], cwd);
+  const stat = await gitExec(['diff', 'HEAD', '--stat', ...GENERATED_PATHSPECS], cwd);
   return `[Large diff — showing file change summary only]\n${stat}`;
-}
-
-async function getGitDiff(cwd: string): Promise<string> {
-  const staged = await getStagedDiff(cwd);
-  if (staged.trim()) {
-    return staged;
-  }
-
-  // Unstaged tracked changes
-  const unstaged = await gitExec(['diff', ...GENERATED_PATHSPECS], cwd).catch(() => '');
-
-  // Untracked (new) files — include their content, skip generated
-  const untrackedList = await gitExec(['ls-files', '--others', '--exclude-standard'], cwd).catch(() => '');
-  const untrackedFiles = untrackedList.split('\n').filter(f => f && !isGeneratedFile(f));
-
-  let untrackedDiff = '';
-  for (const file of untrackedFiles) {
-    try {
-      const buf = fs.readFileSync(path.join(cwd, file));
-      // Skip binary files — null bytes in spawn args cause an EINVAL crash
-      if (buf.includes(0)) {
-        untrackedDiff += `\n+++ new file: ${file} [binary]\n`;
-      } else {
-        untrackedDiff += `\n+++ new file: ${file}\n${buf.toString('utf8')}`;
-      }
-    } catch {
-      untrackedDiff += `\n+++ new file: ${file}\n`;
-    }
-  }
-
-  const combined = (unstaged + untrackedDiff).trim();
-  return combined.length > MAX_DIFF_CHARS ? combined.slice(0, MAX_DIFF_CHARS) : combined;
 }
 
 async function getRecentCommits(cwd: string): Promise<string> {
   try {
-    const log = await gitExec(['log', '--oneline', '-5'], cwd);
+    const log = await gitExec(['log', '--oneline', '-8'], cwd);
     return log
       .split('\n')
       .filter(Boolean)
       .map(line => line.replace(/^[a-f0-9]+ /, ''))
       .join('\n');
+  } catch {
+    return '';
+  }
+}
+
+async function getGitStatus(cwd: string): Promise<string> {
+  try {
+    return await gitExec(['status', '--short'], cwd);
   } catch {
     return '';
   }
@@ -309,6 +285,7 @@ function runClaude(
   model: string,
   cwd: string,
   diff: string,
+  gitStatus: string,
   recentCommits: string,
   claudeMdExcerpt: string,
   timeoutMs: number,
@@ -318,15 +295,21 @@ function runClaude(
   return new Promise((resolve, reject) => {
     let prompt = '';
 
+    prompt += `## Current changes\n${diff}\n\n`;
+
+    if (gitStatus) {
+      prompt += `## Git status\n${gitStatus}\n\n`;
+    }
+
     if (recentCommits) {
-      prompt += `Commit style (follow this pattern):\n${recentCommits}\n\n`;
+      prompt += `## Recent commit style (for reference)\n${recentCommits}\n\n`;
     }
 
     if (claudeMdExcerpt) {
-      prompt += `Project standards:\n${claudeMdExcerpt}\n\n`;
+      prompt += `## Project standards\n${claudeMdExcerpt}\n\n`;
     }
 
-    prompt += `Diff:\n${diff}`;
+    prompt += `## Task\nGenerate a commit message following the rules in the system prompt.`;
 
     const args = [
       '--print',
